@@ -23,7 +23,7 @@ class PreProcess:
         Returns
         -------
         template : cropped Image  
-            croped image of the object we want to track.
+            croped image of the object we want to track ( ground truth ).
 
         '''
         
@@ -45,10 +45,32 @@ class PreProcess:
         #logTransformedImage = (logTransformedImage - np.mean(logTransformedImage)) / np.linalg.norm(logTransformedImage)
         return np.uint8(logTransformedImage)
    
-    def FrequencyDomainTransform(self, logedTemplate):
-        logedTemplate = np.abs(np.fft.fft2(logedTemplate))
-        logedTemplate = np.fft.fftshift(logedTemplate)
-        return logedTemplate
+    def FrequencyDomainTransform(self, template):
+        template = np.abs(np.fft.fft2(template))
+        template = np.fft.fftshift(template)
+        return template
+    
+    def findSynthaticGaussianPeak(self, inputImage, template, segma = 2):
+        # return a gaussian peak image. calculate distance between each pixel
+        # with the center of our target object (template(ground truth))
+        
+        # find center of template (GT)
+        x_c = (template[0]  +template[2]) / 2
+        y_c = (template[1] + template[3]) / 2
+        
+        width, height = inputImage.shape
+        
+        # to vectorise the operation we use mesh grid.
+        width = np.arange(width) # give us a numpy array from 1 -> width
+        height = np.arange(height) # give us a numpy array from 1 -> height
+        array1, array2 = np.meshgrid(width, height) # array1: row indices values, array2: column indices values
+        
+        gaussianArray = np.exp(-((np.square(array1 - x_c) + np.square(array2 - y_c)) / (2 * segma))) 
+        
+        return gaussianArray
+         
+    
+        
     
         
 inits = PreProcess()
