@@ -39,6 +39,13 @@ class PreProcess:
         self.template = np.array(self.template).astype(np.int64)
         return self.template
     
+    def getCropedTemplate4Points(self, inputImage): 
+        bBox = cv2.selectROI('BoundaryBox',
+                                     inputImage,
+                                     showCrosshair = True
+                                     )
+        return bBox
+    
     def logTransformTemplate(self, template):
         const = 255 / np.log(1 + np.max(template)) 
         logTransformedImage = const * (np.log(template + 1)) 
@@ -68,16 +75,26 @@ class PreProcess:
         gaussianArray = np.exp(-((np.square(array1 - x_c) + np.square(array2 - y_c)) / (2 * segma))) 
         
         return gaussianArray
+    
+    def ceateDataSet(self, frame):
+        f = self.logTransformTemplate(self.CreateTemplate(frame)) # input template  
+        F = self.FrequencyDomainTransform(f) # input template frequency domain 
+        g = self.findSynthaticGaussianPeak(frame, self.getCropedTemplate4Points(frame)) # gaussian peak image 
+        G = self.FrequencyDomainTransform(g) # frequency domain gaussian image
+        
+    
+#................................................
+
          
     
         
     
         
 inits = PreProcess()
-template = inits.CreateTemplate(im)
+template = inits.getCropedTemplate4Points(im)
+print(template)
 
-
-logTemplate = inits.logTransformTemplate(template)
+#logTemplate = inits.logTransformTemplate(template)
 #plt.imshow(logTemplate,cmap='gray')
 #plt.show()
 #plt.imshow(inits.FrequencyDomainTransform(logTemplate),cmap='gray')
