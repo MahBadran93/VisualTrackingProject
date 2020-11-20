@@ -2,12 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import cv2
 
-im1 = cv2.imread('download.png')
-im = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
 
 
-
-class PreProcess:
+class MOSSE:
     '''
         - Preprocessing step is performed on every frame of the video before
         initialization or tracking(before using MOSSE Filter).
@@ -31,20 +28,20 @@ class PreProcess:
         '''
         
         # selectROI return value : (x , x+x1, y , y+y1) 
-        bBox = cv2.selectROI('BoundaryBox',
+        bBox_Pose = cv2.selectROI('test',
                                      inputImage,
                                      showCrosshair = True
                                      )
         
-        self.template = inputImage[int(bBox[1]):int(bBox[1]+bBox[3]),
-                              int(bBox[0]):int(bBox[0]+bBox[2])]
+        self.template = inputImage[int(bBox_Pose[1]):int(bBox_Pose[1]+bBox_Pose[3]),
+                              int(bBox_Pose[0]):int(bBox_Pose[0]+bBox_Pose[2])]
         
         self.template = np.array(self.template).astype(np.int64)
-        return self.template
+        return self.template, bBox_Pose 
     
     # return the 4 point poistions of the croped template w.r.t the input image
     def getCropedTemplate4Points(self, inputImage): 
-        bBox = cv2.selectROI('BoundaryBox',
+        bBox = cv2.selectROI('test',
                                      inputImage,
                                      showCrosshair = True
                                      )
@@ -90,7 +87,6 @@ class PreProcess:
         # Gaussian image with gaussian peak centered on the object (g). a ground truth 
         gaussianArray = gaussianArray[int(template[1]):int(template[1]+template[3]),
                               int(template[0]):int(template[0]+template[2])]
-        print(gaussianArray.shape)
         return gaussianArray
     
     #.............. Create the dataset.................................. 
@@ -104,16 +100,17 @@ class PreProcess:
     
     def ceateDataSet(self, frame):
         #a,b,c,d = self.getCropedTemplate4Points(frame) # coordinates of croped template
-        # input template (object in center ) with log transformation added.  
-        template = self.logTransformTemplate(self.CreateTemplate(frame))
+        # input template (object in center ) with log transformation added. 
+        template, bBox_Pose = self.CreateTemplate(frame)
+        template = self.logTransformTemplate(template)
         # input template frequency domain 
         templateFreq = self.FrequencyDomainTransform(template) 
         # gaussian peak centered template
         g = self.findSynthaticGaussianPeak(frame, self.getCropedTemplate4Points(frame))
-        print(template.shape, templateFreq.shape)
         # frequency domain gaussian template
         G = self.FrequencyDomainTransform(g)
-        return template,templateFreq, g, G 
+        # get template 4 point positions (x, x+x0, y, y+y0)
+        return template,templateFreq, g, G, bBox_Pose
     
     #.......................................................................
     
@@ -173,69 +170,77 @@ class PreProcess:
     
         
     def track(self): 
-        
-        #..............get the input data and initilize some param...........
-        
-        # Video or list of frames. Our input.
-        framelist = []
-        
+
         # initialize  trcking window position.
-        # in the first frame it will be in the same position as the template
-        trackingWindow = np.array([self.template[0],
-                               self.template[1],
-                               self.template[0]+self.template[2],
-                               self.template[1]+self.template[3]])
+       
+        # get input video 
+        vcap = cv2.VideoCapture('./Data/testVideo.avi')
         
-
-        for i in range(len(framelist)):
-            curr_frame = cv2.imread(framelist[i])
-            curr_frame_gray = cv2.cvtColor(im1, cv2.COLOR_BGR2GRAY)
-            template,templateF,g,G = inits.ceateDataSet(framelist[i])
-
+        # counter for the video frames
+        i = 0
+      
+        while(True):
+            # read the current frame 
+            ret, curr_frame = vcap.read()
+            # convert to gray 
+            curr_frame_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
+        
             # in the first frame, the tracking window will be in the same position
             # as the croped template. 
             # also we initialize the filter in the first frame.
             if i == 0: 
+                print('Innnnnnnnnn')
+                # extract template, gaussian peak. time and frequency domain
+                template,templateF,g,G, bBox_Pose = self.ceateDataSet(curr_frame_gray)
+                
+                # in the first frame it will be in the same position as the template
+                trackingWindow = np.array([bBox_Pose[0],
+                                  bBox_Pose[1],
+                                  bBox_Pose[0]+bBox_Pose[2],
+                                  bBox_Pose[1]+bBox_Pose[3]])
+        
                 # initialize the filter. eq5 in the paper.
                 Ai,Bi = self.InitializeMOSSE(templateF, G)
                 # Draw a rectangle bounding box in the current frame which 
                 # follows the moving target.
-                cv2.rectangle(framelist[i], (trackingWindow[0], trackingWindow[1]),
-                              (trackingWindow[3], trackingWindow[4]),
-                              (0, 255, 0), 2)
+                i = 1
             else: 
-                Ai,Bi = self.InitializeMOSSE(templateF, G, iteration=0,initFlag=1)
+                #Ai,Bi = self.InitializeMOSSE(templateF, G, iteration=0,initFlag=1)
+                print('ouuuuuuuuuuuuut')
                 
-            
+
             # Visulize the tracking window 
-            cv2.rectangle(curr_frame, (trackingWindow[0], trackingWindow[1]),
-                          (trackingWindow[3], trackingWindow[4]), (0, 255, 0), 2)
-            cv2.imshow('demo', curr_frame)
-            cv2.waitKey(100)    
+            cv2.rectangle(curr_frame_gray, (trackingWindow[0], trackingWindow[1]),
+                          (trackingWindow[2], trackingWindow[3]), (0, 255, 0), 2)
+            cv2.imshow('test', curr_frame_gray)
+            cv2.waitKey(22)
+            # counter 
+            i = i + 1 
+
             
-    
-
-
-
-         
-    
-#................................................
         
+            
+            
 
-inits = PreProcess()
-initalize = inits.InitializeMOSSE(templateF,G)
+              
+start = MOSSE()            
+start.track()
+    
 
-print('template', template.shape,'inits', initalize.shape)
-aff = inits.AFFineTransformation(template)
-#logTemplate = inits.logTransformTemplate(template)
-plt.imshow(initalize ,cmap='gray')
-plt.show()
-plt.imshow(g,cmap='gray')
 
-#plt.imshow(inits.FrequencyDomainTransform(logTemplate),cmap='gray')
-#plt.show()
-#print(np.max(logTemplate),np.min(logTemplate))
-#cv2.imshow('cropedImg', np.fft.fftshift(np.abs(np.fft.fft2(logTemplate)))) 
-#cv2.waitKey(0)
-#cv2.destroyAllWindows()
 
+'''         
+vcap = cv2.VideoCapture('./Data/testVideo.avi')
+while(True):
+    ret, frame = vcap.read()
+    #print cap.isOpened(), ret
+    if frame is not None:
+        # Display the resulting frame
+        cv2.imshow('frame',frame)
+        # Press q to close the video windows before it ends if you want
+        if cv2.waitKey(22) & 0xFF == ord('q'):
+            break
+    else:
+        print ("Frame is None")
+        break
+'''            
