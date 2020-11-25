@@ -28,10 +28,7 @@ class MOSSE:
         '''
         
         # selectROI return value : (x , x+x1, y , y+y1) 
-        bBox_Pose = cv2.selectROI('test',
-                                     inputImage,
-                                     showCrosshair = True
-                                     )
+        bBox_Pose = cv2.selectROI('test', inputImage, showCrosshair = True)
         
         self.template = inputImage[int(bBox_Pose[1]):int(bBox_Pose[1]+bBox_Pose[3]),
                               int(bBox_Pose[0]):int(bBox_Pose[0]+bBox_Pose[2])]
@@ -41,32 +38,28 @@ class MOSSE:
     
     # return the 4 point poistions of the croped template w.r.t the input image
     def getCropedTemplate4Points(self, inputImage): 
-        bBox = cv2.selectROI('test',
-                                     inputImage,
-                                     showCrosshair = True
-                                     )
+        bBox = cv2.selectROI('test', inputImage, showCrosshair = True)
         return bBox
     
     # Log transformation 
     def logTransformTemplate(self, template):
         const = 255 / np.log(1 + np.max(template)) 
         logTransformedImage = const * (np.log(template + 1)) 
-        #logTransformedImage = (logTransformedImage - np.mean(logTransformedImage)) / np.linalg.norm(logTransformedImage)
+        #logTransformedImage = np.divide(np.subtract(logTransformedImage,np.mean(logTransformedImage)),np.linalg.norm(logTransformedImage))
         return np.uint8(logTransformedImage)
    # Frequency Domain (DFT)
     def FrequencyDomainTransform(self, template):
         template = np.abs(np.fft.fft2(template))
         template = np.fft.fftshift(template)
         return template
-    
-    #.........................................................................
-    
+    #....................................................................
     
     '''
     # Find A gaussian peak image using the input image and the template where 
     # the target object is centered in the image.
+    Reference github which helped us to implement this function
     '''
-    def findSynthaticGaussianPeak(self, inputImage, template, segma = 2):
+    def findSynthaticGaussianPeak(self, inputImage, template, segma = 30):
         # return a gaussian peak image. using template matching between
         # the template and the input image by calculating the distance between each pixel
 
@@ -100,38 +93,25 @@ class MOSSE:
     
     def ceateDataSet(self, frame):
         #a,b,c,d = self.getCropedTemplate4Points(frame) # coordinates of croped template
-        # input template (object in center ) with log transformation added. 
+        # input template (object in center ) with log transformation added.
+
         template, bBox_Pose = self.CreateTemplate(frame)
-        template = self.logTransformTemplate(template)
-        # input template frequency domain 
-        templateFreq = self.FrequencyDomainTransform(template) 
         # gaussian peak centered template
         g = self.findSynthaticGaussianPeak(frame, self.getCropedTemplate4Points(frame))
         # frequency domain gaussian template
         G = self.FrequencyDomainTransform(g)
+        
+        template = self.logTransformTemplate(template)
+        #template = self.pre_process(template)
+        # input template frequency domain 
+        templateFreq = self.FrequencyDomainTransform(template) 
+
         # get template 4 point positions (x, x+x0, y, y+y0)
         return template,templateFreq, g, G, bBox_Pose
     
     #.......................................................................
-    
-    '''
-    # Apply Affine Transformation on the cropped image(the template)
-    # This function can be used during the initialzation process
-    '''
-    def AFFineTransformation(self, template):
-        a = -180 / 16
-        b = 180 / 16
-        r = a + (b - a) * np.random.uniform()
-        matrix_rot = cv2.getRotationMatrix2D((template.shape[1]/2, template.shape[0]/2), r, 1)
-        img_rot = cv2.warpAffine(np.uint8(template * 255), matrix_rot, (template.shape[1], template.shape[0]))
-        img_rot = img_rot.astype(np.float32) / 255
-        return img_rot
-        
-    # as the paper implies, Mosse filter needs training images (templates) in frequency domain, 
-    # and G(ground truth), a croped image of the object to track (gaussian peak centered) in frequency domain.
-    # we use frequency domain images to simplify the calculations (use element wise mult. instead of convolution).
-    # in tracking, for each frame we will call MOSSE filter 
-    def InitializeMOSSE(self, templateFreq, G, iteration = 100,
+  
+    def InitializeMOSSE(self, templateFreq, G, iteration = 128,
                         learning_Rate= 0.125 , initFlag = 0 ):
         '''
         Parameters
@@ -152,19 +132,25 @@ class MOSSE:
         Ai, Bi : MOSSEE Filter parameter values 
 
         '''
+        # Resize the G (peak image) to be the same as templateFreq
         G = cv2.resize(G, dsize=(templateFreq.shape[1],templateFreq.shape[0]), interpolation=cv2.INTER_CUBIC)
         
         # if we are in the first frame we initilize the MOSSE filter.
         # Applying the H filter equations presented in the paper
         Ai = G * np.conjugate(templateFreq)
-        Bi = templateFreq * np.conjugate(templateFreq)
-        if initFlag == 0:
+        Bi = (templateFreq * np.conjugate(templateFreq))
+        # For the first frame we iterate to initialize the Filter H
+        if initFlag == 0:  
             for i in range(iteration):
-                Ai = Ai + G * np.conjugate(templateFreq)
-                Bi = Bi + templateFreq * np.conjugate(templateFreq)
+                Ai = Ai + (G * np.conjugate(templateFreq))
+                Bi = Bi + (templateFreq * np.conjugate(templateFreq))
+            # initial values of the Filter parameters     
+            Ai = learning_Rate * Ai
+            Bi = learning_Rate * Bi
         else: 
-            Ai = (learning_Rate * Ai) + (1-learning_Rate)*(G * np.conjugate(templateFreq))
-            Bi = (learning_Rate * Bi) + (1-learning_Rate)*(templateFreq * np.conjugate(templateFreq))
+            # From the second frame till the end, Apply the parameters equations with the learning rate for each frame
+            Ai = ((1-learning_Rate) * Ai) + (learning_Rate)*(G * np.conjugate(templateFreq))
+            Bi = ((1-learning_Rate) * Bi) + (learning_Rate)*(templateFreq * np.conjugate(templateFreq))
             
         return Ai, Bi 
     
@@ -178,7 +164,7 @@ class MOSSE:
         
         # counter for the video frames
         i = 0
-      
+        # Iterate over all the frames in the input video 
         while(True):
             # read the current frame 
             ret, curr_frame = vcap.read()
@@ -187,33 +173,79 @@ class MOSSE:
         
             # in the first frame, the tracking window will be in the same position
             # as the croped template. 
-            # also we initialize the filter in the first frame.
+            # Initialize the filter in the first frame.
             if i == 0: 
-                print('Innnnnnnnnn')
-                # extract template, gaussian peak. time and frequency domain
+                # extract template, gaussian peak.
+                # In time(template,g) and frequency domain(templateF,G)
                 template,templateF,g,G, bBox_Pose = self.ceateDataSet(curr_frame_gray)
-                
-                # in the first frame it will be in the same position as the template
+                # current frame tracking window coordinates
+                bBox_Pose = np.array(bBox_Pose).astype(np.int64)
                 trackingWindow = np.array([bBox_Pose[0],
                                   bBox_Pose[1],
                                   bBox_Pose[0]+bBox_Pose[2],
-                                  bBox_Pose[1]+bBox_Pose[3]])
+                                  bBox_Pose[1]+bBox_Pose[3]]).astype(np.int64)
         
-                # initialize the filter. eq5 in the paper.
+                #initialize the filter(using only the first frame).
+                # Eq5 in the paper.
                 Ai,Bi = self.InitializeMOSSE(templateF, G)
-                # Draw a rectangle bounding box in the current frame which 
-                # follows the moving target.
                 i = 1
             else: 
-                #Ai,Bi = self.InitializeMOSSE(templateF, G, iteration=0,initFlag=1)
-                print('ouuuuuuuuuuuuut')
+                # Regulizer
+                reg = 0
+                # Filter which will be updated in each frame 
+                Hi = Ai/(Bi + reg)
+                              
+                # Draw a rectangle bounding box in the current frame which 
+                # follows the moving target(by updating the tracking window)
+                curr_template = curr_frame_gray[trackingWindow[1]:trackingWindow[3],
+                                    trackingWindow[0]:trackingWindow[2]]
+
+                #curr_template = cv2.resize(fi, (bBox_Pose[2], bBox_Pose[3]))
+                curr_template = self.logTransformTemplate(curr_template)
+                # Currrent template in Fourier Space
+                curr_templateF = self.FrequencyDomainTransform(curr_template)
                 
+                # The multiplication of the updated Filter H conjugate and curr_templateF
+                # results in a peak image (G) which indicates the new location
+                # of the target object.we are going to call it newObjLoction_G
+                newObjLoction_G = Hi * curr_templateF
+                #newObjLoction_G = np.uint8(np.fft.ifft2(newObjLoction_G))
+                
+                # find the position where the peak is, the center(where we will find the target object)
+                #newObjLoction_G = self.FrequencyDomainTransform(newObjLoction_G)
+                max_value = np.max(newObjLoction_G)
+                max_pos = np.where(newObjLoction_G == max_value)
+
+                changeIn_Y = int(np.mean(max_pos[0]) - newObjLoction_G.shape[0] / 2)
+                changeIn_X = int(np.mean(max_pos[1]) - newObjLoction_G.shape[1] / 2)
+                
+                # update the position...
+                bBox_Pose[0] = bBox_Pose[0] + changeIn_X
+                bBox_Pose[1] = bBox_Pose[1] + changeIn_Y
+
+                # trying to get the clipped position [xmin, ymin, xmax, ymax]
+                trackingWindow[0] = bBox_Pose[0] 
+                trackingWindow[1] = bBox_Pose[1] 
+                trackingWindow[2] = bBox_Pose[0]+bBox_Pose[2] 
+                trackingWindow[3] = bBox_Pose[1]+bBox_Pose[3] 
+                trackingWindow = trackingWindow.astype(np.int64)
+
+                # get the current template using the updated tracking winow..
+                curr_template = curr_frame_gray[trackingWindow[1]:trackingWindow[3], trackingWindow[0]:trackingWindow[2]]
+                curr_template = cv2.resize(curr_template, (bBox_Pose[2], bBox_Pose[3]))
+                curr_template = self.logTransformTemplate(curr_template)
+                curr_templateF = self.FrequencyDomainTransform(curr_template)
+                #plt.imshow(Fi)
+                #plt.show()
+                # online update...
+                Ai,Bi = self.InitializeMOSSE(curr_templateF, G, iteration=0,initFlag=1)
+
 
             # Visulize the tracking window 
-            cv2.rectangle(curr_frame_gray, (trackingWindow[0], trackingWindow[1]),
-                          (trackingWindow[2], trackingWindow[3]), (0, 255, 0), 2)
-            cv2.imshow('test', curr_frame_gray)
-            cv2.waitKey(22)
+            cv2.rectangle(curr_frame, (trackingWindow[0], trackingWindow[1]),
+                          (trackingWindow[2], trackingWindow[3]), (255, 0, 0), 2)
+            cv2.imshow('test', curr_frame)
+            cv2.waitKey(100)
             # counter 
             i = i + 1 
 
