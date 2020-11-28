@@ -1,8 +1,7 @@
 import numpy as np 
 import matplotlib.pyplot as plt 
 import cv2
-
-
+import os
 
 class MOSSE:
     '''
@@ -12,6 +11,10 @@ class MOSSE:
     '''
     def __init__(self):
         self.template = [] 
+        self.trackingWindow = []
+        self.bBox_Pose = []
+        self.Ai = 0
+        self.Bi = 0
         
     # crop the target object from an input image and return the croped template
     def CreateTemplate(self, inputImage): 
@@ -47,11 +50,23 @@ class MOSSE:
         logTransformedImage = const * (np.log(template + 1)) 
         #logTransformedImage = np.divide(np.subtract(logTransformedImage,np.mean(logTransformedImage)),np.linalg.norm(logTransformedImage))
         return np.uint8(logTransformedImage)
+    
+   
    # Frequency Domain (DFT)
     def FrequencyDomainTransform(self, template):
         template = np.abs(np.fft.fft2(template))
         template = np.fft.fftshift(template)
         return template
+    
+    # Affine preprocessing 
+    def Affine(self, template):
+        a = -180 / 16
+        b = 180 / 16
+        r = a + (b - a) * np.random.uniform()
+        rotationMatrix = cv2.getRotationMatrix2D((template.shape[1]/2, template.shape[0]/2), r, 1)
+        rotatedTemplate = cv2.warpAffine(np.uint8(template * 255), rotationMatrix, (template.shape[1], template.shape[0]))
+        rotatedTemplate = rotatedTemplate.astype(np.float32) / 255
+        return rotatedTemplate
     #....................................................................
     
     '''
@@ -59,11 +74,11 @@ class MOSSE:
     # the target object is centered in the image.
     Reference github which helped us to implement this function
     '''
-    def findSynthaticGaussianPeak(self, inputImage, template, segma = 30):
+    def findSynthaticGaussianPeak(self, inputImage, template, segma = 100):
         # return a gaussian peak image. using template matching between
         # the template and the input image by calculating the distance between each pixel
 
-        # find center of template (GT)
+        # find center of template (GT) w.r.t the input image
         x_c = template[0] + (template[2] / 2)
         y_c = template[1] + (template[3] / 2)
       
@@ -110,13 +125,13 @@ class MOSSE:
         return template,templateFreq, g, G, bBox_Pose
     
     #.......................................................................
-  
-    def InitializeMOSSE(self, templateFreq, G, iteration = 128,
+
+    def InitializeMOSSE(self, template, G, iteration = 128,
                         learning_Rate= 0.125 , initFlag = 0 ):
         '''
         Parameters
         ----------
-        templateFreq : Cropped Image in Fourier space. 
+        template : Log of Cropped Image. 
         
         G : Gaussian Peak image in Fourier space (GT).
         
@@ -133,8 +148,12 @@ class MOSSE:
 
         '''
         # Resize the G (peak image) to be the same as templateFreq
-        G = cv2.resize(G, dsize=(templateFreq.shape[1],templateFreq.shape[0]), interpolation=cv2.INTER_CUBIC)
+        G = cv2.resize(G, dsize=(template.shape[1],template.shape[0]), interpolation=cv2.INTER_CUBIC)
         
+        ''' change preprocessing methods here'''
+        #templateFreq = self.FrequencyDomainTransform(random_warp(template))
+        template = self.logTransformTemplate(self.Affine(template))
+        templateFreq = self.FrequencyDomainTransform(template)
         # if we are in the first frame we initilize the MOSSE filter.
         # Applying the H filter equations presented in the paper
         Ai = G * np.conjugate(templateFreq)
@@ -153,14 +172,23 @@ class MOSSE:
             Bi = ((1-learning_Rate) * Bi) + (learning_Rate)*(templateFreq * np.conjugate(templateFreq))
             
         return Ai, Bi 
+    # read frames instead of video 
+    def readFrames(self,path):    
+        images = []
+        path = path
+        for filename in os.listdir(path):
+            img = cv2.imread(os.path.join(path,filename))
+            if img is not None:
+                images.append(img)
+        return images
     
-        
-    def track(self): 
+    def trackVideo(self): 
 
         # initialize  trcking window position.
        
         # get input video 
         vcap = cv2.VideoCapture('./Data/testVideo.avi')
+        
         
         # counter for the video frames
         i = 0
@@ -175,104 +203,194 @@ class MOSSE:
             # as the croped template. 
             # Initialize the filter in the first frame.
             if i == 0: 
-                # extract template, gaussian peak.
+                # create the training data. extract template, gaussian peak.
                 # In time(template,g) and frequency domain(templateF,G)
                 template,templateF,g,G, bBox_Pose = self.ceateDataSet(curr_frame_gray)
                 # current frame tracking window coordinates
-                bBox_Pose = np.array(bBox_Pose).astype(np.int64)
-                trackingWindow = np.array([bBox_Pose[0],
+                self.bBox_Pose = np.array(bBox_Pose).astype(np.int64)
+                self.trackingWindow = np.array([bBox_Pose[0],
                                   bBox_Pose[1],
                                   bBox_Pose[0]+bBox_Pose[2],
                                   bBox_Pose[1]+bBox_Pose[3]]).astype(np.int64)
         
                 #initialize the filter(using only the first frame).
                 # Eq5 in the paper.
-                Ai,Bi = self.InitializeMOSSE(templateF, G)
+                self.Ai,self.Bi = self.InitializeMOSSE(template, G)
                 i = 1
             else: 
                 # Regulizer
-                reg = 0
+                reg = 0.01
                 # Filter which will be updated in each frame 
-                Hi = Ai/(Bi + reg)
+                Hi = self.Ai/(self.Bi + reg)
                               
                 # Draw a rectangle bounding box in the current frame which 
                 # follows the moving target(by updating the tracking window)
-                curr_template = curr_frame_gray[trackingWindow[1]:trackingWindow[3],
-                                    trackingWindow[0]:trackingWindow[2]]
+                curr_template = curr_frame_gray[self.trackingWindow[1]:self.trackingWindow[3],
+                                    self.trackingWindow[0]:self.trackingWindow[2]]
 
-                #curr_template = cv2.resize(fi, (bBox_Pose[2], bBox_Pose[3]))
+                curr_template = cv2.resize(curr_template, (self.bBox_Pose[2], self.bBox_Pose[3]))
+                
+                ''' change preprocessing methods here'''
                 curr_template = self.logTransformTemplate(curr_template)
+                #curr_template = pre_process(random_warp(curr_template))
+
                 # Currrent template in Fourier Space
                 curr_templateF = self.FrequencyDomainTransform(curr_template)
                 
                 # The multiplication of the updated Filter H conjugate and curr_templateF
                 # results in a peak image (G) which indicates the new location
                 # of the target object.we are going to call it newObjLoction_G
-                newObjLoction_G = Hi * curr_templateF
-                #newObjLoction_G = np.uint8(np.fft.ifft2(newObjLoction_G))
+                newObjLoction_G = np.conjugate(Hi) * curr_templateF
+                '''
+                if(i>19):
+                    plt.imshow(Hi)
+                    plt.show() 
+                    plt.imshow(newObjLoction_G)
+                    plt.show()   
+                '''
                 
                 # find the position where the peak is, the center(where we will find the target object)
-                #newObjLoction_G = self.FrequencyDomainTransform(newObjLoction_G)
                 max_value = np.max(newObjLoction_G)
                 max_pos = np.where(newObjLoction_G == max_value)
 
-                changeIn_Y = int(np.mean(max_pos[0]) - newObjLoction_G.shape[0] / 2)
-                changeIn_X = int(np.mean(max_pos[1]) - newObjLoction_G.shape[1] / 2)
+                #Find the change in the x direction and y direction to update the tracking window
+                changeIn_Y = int(np.mean(max_pos[0]) - (newObjLoction_G.shape[0] * 0.5))
+                changeIn_X = int(np.mean(max_pos[1]) - (newObjLoction_G.shape[1] * 0.5))
                 
                 # update the position...
-                bBox_Pose[0] = bBox_Pose[0] + changeIn_X
-                bBox_Pose[1] = bBox_Pose[1] + changeIn_Y
+                self.bBox_Pose[0] = self.bBox_Pose[0] + changeIn_X
+                self.bBox_Pose[1] = self.bBox_Pose[1] + changeIn_Y
 
                 # trying to get the clipped position [xmin, ymin, xmax, ymax]
-                trackingWindow[0] = bBox_Pose[0] 
-                trackingWindow[1] = bBox_Pose[1] 
-                trackingWindow[2] = bBox_Pose[0]+bBox_Pose[2] 
-                trackingWindow[3] = bBox_Pose[1]+bBox_Pose[3] 
-                trackingWindow = trackingWindow.astype(np.int64)
+                self.trackingWindow[0] = self.bBox_Pose[0] 
+                self.trackingWindow[1] = self.bBox_Pose[1] 
+                self.trackingWindow[2] = self.bBox_Pose[0]+self.bBox_Pose[2] 
+                self.trackingWindow[3] = self.bBox_Pose[1]+self.bBox_Pose[3] 
+                self.trackingWindow = self.trackingWindow.astype(np.int64)
 
                 # get the current template using the updated tracking winow..
-                curr_template = curr_frame_gray[trackingWindow[1]:trackingWindow[3], trackingWindow[0]:trackingWindow[2]]
-                curr_template = cv2.resize(curr_template, (bBox_Pose[2], bBox_Pose[3]))
+                curr_template = curr_frame_gray[self.trackingWindow[1]:self.trackingWindow[3], self.trackingWindow[0]:self.trackingWindow[2]]
+                curr_template = cv2.resize(curr_template, (self.bBox_Pose[2], self.bBox_Pose[3]))
+               
+                ''' change preprocessing methods here'''
                 curr_template = self.logTransformTemplate(curr_template)
+                #curr_template = pre_process(random_warp(curr_template))
+
                 curr_templateF = self.FrequencyDomainTransform(curr_template)
-                #plt.imshow(Fi)
-                #plt.show()
-                # online update...
-                Ai,Bi = self.InitializeMOSSE(curr_templateF, G, iteration=0,initFlag=1)
+
+                # Update A and B
+                self.Ai,self.Bi = self.InitializeMOSSE(curr_templateF, G, iteration=0,initFlag=1)
 
 
             # Visulize the tracking window 
-            cv2.rectangle(curr_frame, (trackingWindow[0], trackingWindow[1]),
-                          (trackingWindow[2], trackingWindow[3]), (255, 0, 0), 2)
+            cv2.rectangle(curr_frame, (self.trackingWindow[0], self.trackingWindow[1]),
+                          (self.trackingWindow[2], self.trackingWindow[3]), (255, 0, 0), 2)
             cv2.imshow('test', curr_frame)
             cv2.waitKey(100)
             # counter 
             i = i + 1 
-
             
+
+    def trackFrames(self): 
+
+       # initialize  trcking window position.
+
+       # counter for the video frames
+       i = 0
+       # list of frames 
+       listOfFrames = self.readFrames('./Data/test5')
+       # Iterate over all the frames in the input video 
+       for i in range(len(listOfFrames)):
+           # read the current frame 
+           curr_frame = listOfFrames[i] 
+           # convert to gray 
+           curr_frame_gray = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2GRAY)
+       
+           # in the first frame, the tracking window will be in the same position
+           # as the croped template. 
+           # Initialize the filter in the first frame.
+           if i == 0: 
+               # create the training data. extract template, gaussian peak.
+               # In time(template,g) and frequency domain(templateF,G)
+               template,templateF,g,G, bBox_Pose = self.ceateDataSet(curr_frame_gray)
+               # current frame tracking window coordinates
+               self.bBox_Pose = np.array(bBox_Pose).astype(np.int64)
+               self.trackingWindow = np.array([bBox_Pose[0],
+                                 bBox_Pose[1],
+                                 bBox_Pose[0]+bBox_Pose[2],
+                                 bBox_Pose[1]+bBox_Pose[3]]).astype(np.int64)
+       
+               #initialize the filter(using only the first frame).
+               # Eq5 in the paper.
+               self.Ai,self.Bi = self.InitializeMOSSE(template, G)
+              
+           else: 
+               # Regulizer
+               reg = 0.01
+               # Filter which will be updated in each frame 
+               Hi = self.Ai/(self.Bi + reg)
+                             
+               # Draw a rectangle bounding box in the current frame which 
+               # follows the moving target(by updating the tracking window)
+               curr_template = curr_frame_gray[self.trackingWindow[1]:self.trackingWindow[3],
+                                   self.trackingWindow[0]:self.trackingWindow[2]]
+
+
+               curr_template = cv2.resize(curr_template, (self.bBox_Pose[2], self.bBox_Pose[3]))
+               curr_template = self.logTransformTemplate(curr_template)
+               # Currrent template in Fourier Space
+               curr_templateF = self.FrequencyDomainTransform(curr_template)
+               
+               # The multiplication of the updated Filter H conjugate and curr_templateF
+               # results in a peak image (G) which indicates the new location
+               # of the target object.we are going to call it newObjLoction_G
+               newObjLoction_G = Hi * curr_templateF
+               #newObjLoction_G = np.uint8(np.fft.ifft2(newObjLoction_G))
+                       
+               # find the position where the peak is, the center(where we will find the target object)
+               #newObjLoction_G = self.FrequencyDomainTransform(newObjLoction_G)
+               max_value = np.max(newObjLoction_G)
+               max_pos = np.where(newObjLoction_G == max_value)
+
+               changeIn_Y = int(np.mean(max_pos[0]) - (newObjLoction_G.shape[0] * 0.5))
+               changeIn_X = int(np.mean(max_pos[1]) - (newObjLoction_G.shape[1] * 0.5))
+               
+               # update the position...
+               self.bBox_Pose[0] = self.bBox_Pose[0] + changeIn_X
+               self.bBox_Pose[1] = self.bBox_Pose[1] + changeIn_Y
+
+               # trying to get the clipped position [xmin, ymin, xmax, ymax]
+               self.trackingWindow[0] = self.bBox_Pose[0] 
+               self.trackingWindow[1] = self.bBox_Pose[1] 
+               self.trackingWindow[2] = self.bBox_Pose[0]+self.bBox_Pose[2] 
+               self.trackingWindow[3] = self.bBox_Pose[1]+self.bBox_Pose[3] 
+               self.trackingWindow = self.trackingWindow.astype(np.int64)
+
+               # get the current template using the updated tracking winow..
+               curr_template = curr_frame_gray[self.trackingWindow[1]:self.trackingWindow[3], self.trackingWindow[0]:self.trackingWindow[2]]
+               curr_template = cv2.resize(curr_template, (self.bBox_Pose[2], self.bBox_Pose[3]))
+               curr_template = self.logTransformTemplate(curr_template)
+               curr_templateF = self.FrequencyDomainTransform(curr_template)
+               # online update...
+               self.Ai,self.Bi = self.InitializeMOSSE(curr_templateF, G, iteration=0,initFlag=1)
+
+
+           # Visulize the tracking window 
+           cv2.rectangle(curr_frame, (self.trackingWindow[0], self.trackingWindow[1]),
+                      (self.trackingWindow[2], self.trackingWindow[3]), (255, 0, 0), 2)
+           cv2.imshow('test', curr_frame)
+           cv2.waitKey(100)
+           # counter 
+           i = i + 1 
+        
         
             
             
 
-              
-start = MOSSE()            
-start.track()
-    
+#................................Test.......................................              
+start = MOSSE()  
+# test data 1 with images          
+#start.trackFrames()
 
-
-
-'''         
-vcap = cv2.VideoCapture('./Data/testVideo.avi')
-while(True):
-    ret, frame = vcap.read()
-    #print cap.isOpened(), ret
-    if frame is not None:
-        # Display the resulting frame
-        cv2.imshow('frame',frame)
-        # Press q to close the video windows before it ends if you want
-        if cv2.waitKey(22) & 0xFF == ord('q'):
-            break
-    else:
-        print ("Frame is None")
-        break
-'''            
+# test data 2 video 
+start.trackVideo()
