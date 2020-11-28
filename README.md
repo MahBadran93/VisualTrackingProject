@@ -9,4 +9,5 @@ The program is developed using python. <br>
 - The test has been done on two videos Look at this video: <br>
 https://www.loom.com/share/5f0031442c244a32b865c71ac154dd8d <br> 
 
-It can be noticed the tracking quality is not good and sometimes the tracking window diverge from the object, some time changing the parameters like the learning rate and the regularizer affect the quality and make a better tracking. 
+It can be noticed the tracking quality is not good and sometimes the tracking window diverge from the object, some time changing the parameters like the learning rate and the regularizer affect the quality and make a better tracking. <br> 
+The program is commented and each step is explained.
