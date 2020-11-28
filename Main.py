@@ -182,12 +182,12 @@ class MOSSE:
                 images.append(img)
         return images
     
-    def trackVideo(self): 
+    def trackVideo(self, path): 
 
         # initialize  trcking window position.
        
         # get input video 
-        vcap = cv2.VideoCapture('./Data/testVideo.avi')
+        vcap = cv2.VideoCapture(path)
         
         
         # counter for the video frames
@@ -291,14 +291,14 @@ class MOSSE:
             i = i + 1 
             
 
-    def trackFrames(self): 
+    def trackFrames(self, path): 
 
        # initialize  trcking window position.
 
        # counter for the video frames
        i = 0
        # list of frames 
-       listOfFrames = self.readFrames('./Data/test5')
+       listOfFrames = self.readFrames(path)
        # Iterate over all the frames in the input video 
        for i in range(len(listOfFrames)):
            # read the current frame 
@@ -389,8 +389,12 @@ class MOSSE:
 
 #................................Test.......................................              
 start = MOSSE()  
-# test data 1 with images          
-#start.trackFrames()
+# test data 1 with images
+# your data path    
+path = './Data/test5'      
+start.trackFrames(path)
 
-# test data 2 video 
-start.trackVideo()
+# test data video 
+# your video path 
+#path = './Data/testVideo.avi'
+#start.trackVideo(path)
