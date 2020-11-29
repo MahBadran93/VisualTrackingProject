@@ -91,7 +91,7 @@ class MOSSE:
         array1, array2 = np.meshgrid(width, height) # array1: array of row index values, array2: array of column index values
         
         # Gaussian image
-        gaussianArray = np.exp(-((np.square(array1 - x_c) + np.square(array2 - y_c)) / (2 * segma))) 
+        gaussianArray = 1 - (np.exp(-((np.square(array1 - x_c) + np.square(array2 - y_c)) / (2 * segma))))
         # Gaussian image with gaussian peak centered on the object (g). a ground truth 
         gaussianArray = gaussianArray[int(template[1]):int(template[1]+template[3]),
                               int(template[0]):int(template[0]+template[2])]
@@ -344,7 +344,7 @@ class MOSSE:
                # The multiplication of the updated Filter H conjugate and curr_templateF
                # results in a peak image (G) which indicates the new location
                # of the target object.we are going to call it newObjLoction_G
-               newObjLoction_G = Hi * curr_templateF
+               newObjLoction_G = np.conjugate(Hi) * curr_templateF
                #newObjLoction_G = np.uint8(np.fft.ifft2(newObjLoction_G))
                        
                # find the position where the peak is, the center(where we will find the target object)
@@ -379,7 +379,7 @@ class MOSSE:
            cv2.rectangle(curr_frame, (self.trackingWindow[0], self.trackingWindow[1]),
                       (self.trackingWindow[2], self.trackingWindow[3]), (255, 0, 0), 2)
            cv2.imshow('test', curr_frame)
-           cv2.waitKey(100)
+           cv2.waitKey(50)
            # counter 
            i = i + 1 
         
@@ -392,9 +392,9 @@ start = MOSSE()
 # test data 1 with images
 # your data path    
 path = './Data/test5'      
-start.trackFrames(path)
+#start.trackFrames(path)
 
 # test data video 
 # your video path 
-#path = './Data/testVideo.avi'
-#start.trackVideo(path)
+path = './Data/testVideo.avi'
+start.trackVideo(path)
