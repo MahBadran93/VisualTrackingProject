@@ -2,7 +2,8 @@
 This software is an attempt to implement of visul tracking filter called Mosse Filter by this paper: <br> 
 https://www.cs.colostate.edu/~vision/publications/bolme_cvpr10.pdf <br> 
 
-The program is developed using python. <br> 
+# Packages: 
+- opencv-python <br> 
 # To run: <br> 
 - Run main.py
 - The test video will open, then select a bounding box around the the object you want to track(try to make the bounding box close to your target), use your mouse to select the bounding box. 
